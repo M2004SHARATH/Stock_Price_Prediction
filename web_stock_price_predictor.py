@@ -17,8 +17,16 @@ stock = st.text_input("Enter the Stock ID", "HDB")
 end = datetime.now()
 start = datetime(end.year - 20, end.month, end.day)
 
-# Download stock data
+# 1. Download stock data
 steel_authority = yf.download(stock, start, end)
+
+# 2. ADD THIS LINE TO FIX THE KEYERROR
+steel_authority.columns = steel_authority.columns.get_level_values(0) 
+
+# 3. Safety check (Recommended)
+if steel_authority.empty:
+    st.error("No data found. Check Ticker ID.")
+    st.stop()
 
 # Load pre-trained model
 model = load_model("Latest_stock_price_model.keras")
