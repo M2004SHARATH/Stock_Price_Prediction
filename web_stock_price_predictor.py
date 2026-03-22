@@ -29,7 +29,7 @@ st.write(steel_authority)
 
 # Splitting the data
 splitting_len = int(len(steel_authority) * 0.7)
-x_test = pd.DataFrame(steel_authority.Close[splitting_len:])
+x_test = pd.DataFrame(steel_authority['Close'][splitting_len:])
 
 # Define plot function
 def plot_graph(figsize, values, full_data, extra_data=0, extra_dataset= None):
@@ -57,7 +57,7 @@ st.pyplot(plot_graph((15, 6), steel_authority['MA_for_100_days'], steel_authorit
 
 # Scaling and preparing data for prediction
 scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_data = scaler.fit_transform(x_test[[stock]])
+scaled_data = scaler.fit_transform(x_test[['Close']])
 
 x_data, y_data = [], []
 for i in range(100, len(scaled_data)):
