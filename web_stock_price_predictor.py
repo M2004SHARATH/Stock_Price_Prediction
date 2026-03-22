@@ -3,91 +3,95 @@ import pandas as pd
 import numpy as np
 from keras.models import load_model
 import matplotlib.pyplot as plt
-import yfinance as yf
-from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
+from datetime import datetime
+import requests
+
+# -------------------- CONFIG --------------------
+API_KEY = "YOUR_API_KEY_HERE"   # 🔴 PUT YOUR KEY HERE
 
 # -------------------- TITLE --------------------
 st.title("📈 Stock Price Predictor App")
 
 # -------------------- INPUT --------------------
-stock_input = st.text_input("Enter Stock Ticker", "RELIANCE")
+stock = st.text_input("Enter Stock Symbol (e.g. AAPL, MSFT)", "AAPL")
 
-# -------------------- DATE RANGE --------------------
-end = datetime.now()
-start = datetime(end.year - 20, end.month, end.day)
+# -------------------- FETCH DATA --------------------
+def get_stock_data(symbol):
+    url = f"https://www.alphavantage.co/query"
+    
+    params = {
+        "function": "TIME_SERIES_DAILY_ADJUSTED",
+        "symbol": symbol,
+        "outputsize": "full",
+        "apikey": API_KEY
+    }
 
-# -------------------- DOWNLOAD DATA (SMART HANDLING) --------------------
-def load_data(ticker):
-    data = yf.download(ticker, start=start, end=end)
-    return data
+    r = requests.get(url, params=params)
+    data = r.json()
 
-data = load_data(stock_input)
+    if "Time Series (Daily)" not in data:
+        return pd.DataFrame()
 
-# Try Indian suffix if no data
-if data.empty and "." not in stock_input:
-    stock_input_ns = stock_input + ".NS"
-    data = load_data(stock_input_ns)
-    if not data.empty:
-        stock_input = stock_input_ns
+    df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient="index")
+    
+    df = df.rename(columns={
+        "1. open": "Open",
+        "2. high": "High",
+        "3. low": "Low",
+        "4. close": "Close",
+        "5. adjusted close": "Adj Close",
+        "6. volume": "Volume"
+    })
 
-# Final check
+    df = df.astype(float)
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+
+    return df
+
+# Load data
+data = get_stock_data(stock)
+
+# Error handling
 if data.empty:
-    st.error("❌ No data found. Try valid tickers like:")
-    st.write([
-        "AAPL", "TSLA", "GOOGL",
-        "RELIANCE.NS", "TCS.NS", "INFY.NS"
-    ])
+    st.error("❌ Failed to fetch data. Check your API key or stock symbol.")
+    st.info("👉 Try: AAPL, MSFT, TSLA")
     st.stop()
 
 # -------------------- SHOW DATA --------------------
-st.subheader(f"Stock Data for {stock_input}")
+st.subheader(f"Stock Data for {stock}")
 st.write(data.tail())
 
 # -------------------- LOAD MODEL --------------------
 model = load_model("Latest_stock_price_model.keras")
 
-# -------------------- SPLIT DATA --------------------
-splitting_len = int(len(data) * 0.7)
-train_data = data[:splitting_len]
-test_data = data[splitting_len:]
+# -------------------- SPLIT --------------------
+split = int(len(data) * 0.7)
+train = data[:split]
+test = data[split:]
 
-x_test = pd.DataFrame(test_data['Close'])
-
-# -------------------- PLOT FUNCTION --------------------
-def plot_graph(figsize, ma_values, full_data, extra=False, extra_data=None):
-    fig = plt.figure(figsize=figsize)
-    plt.plot(full_data['Close'], label='Close Price', color='blue')
-    plt.plot(ma_values, label='Moving Average', color='orange')
-    
-    if extra and extra_data is not None:
-        plt.plot(extra_data, label='Extra MA', color='green')
-
-    plt.legend()
-    return fig
+x_test = test[['Close']]
 
 # -------------------- MOVING AVERAGES --------------------
-data['MA250'] = data['Close'].rolling(250).mean()
-st.subheader("Close Price & 250-Day MA")
-st.pyplot(plot_graph((15, 6), data['MA250'], data))
-
-data['MA200'] = data['Close'].rolling(200).mean()
-st.subheader("Close Price & 200-Day MA")
-st.pyplot(plot_graph((15, 6), data['MA200'], data))
-
 data['MA100'] = data['Close'].rolling(100).mean()
-st.subheader("Close Price & 100-Day MA")
-st.pyplot(plot_graph((15, 6), data['MA100'], data, True, data['MA250']))
+data['MA200'] = data['Close'].rolling(200).mean()
+
+st.subheader("📊 Moving Averages")
+fig1 = plt.figure(figsize=(15,6))
+plt.plot(data['Close'], label="Close")
+plt.plot(data['MA100'], label="MA100")
+plt.plot(data['MA200'], label="MA200")
+plt.legend()
+st.pyplot(fig1)
 
 # -------------------- SCALING --------------------
-scaler = MinMaxScaler(feature_range=(0, 1))
+scaler = MinMaxScaler(feature_range=(0,1))
+scaler.fit(train[['Close']])
 
-# Fit ONLY on training data
-scaler.fit(train_data[['Close']])
+scaled_test = scaler.transform(x_test)
 
-scaled_test = scaler.transform(x_test[['Close']])
-
-# -------------------- CREATE SEQUENCES --------------------
+# -------------------- CREATE SEQUENCE --------------------
 x_data, y_data = [], []
 
 for i in range(100, len(scaled_test)):
@@ -96,36 +100,33 @@ for i in range(100, len(scaled_test)):
 
 x_data, y_data = np.array(x_data), np.array(y_data)
 
-# Safety check
 if len(x_data) == 0:
-    st.error("❌ Not enough data to make predictions.")
+    st.error("❌ Not enough data for prediction.")
     st.stop()
 
-# -------------------- PREDICTION --------------------
-predictions = model.predict(x_data)
+# -------------------- PREDICT --------------------
+pred = model.predict(x_data)
 
-# -------------------- INVERSE SCALING --------------------
-inv_predictions = scaler.inverse_transform(predictions)
-inv_y = scaler.inverse_transform(y_data)
+# -------------------- INVERSE SCALE --------------------
+pred_inv = scaler.inverse_transform(pred)
+y_inv = scaler.inverse_transform(y_data)
 
-# -------------------- RESULTS DATAFRAME --------------------
-plotting_data = pd.DataFrame({
-    'Actual Price': inv_y.reshape(-1),
-    'Predicted Price': inv_predictions.reshape(-1)
-}, index=data.index[splitting_len + 100:])
+# -------------------- RESULTS --------------------
+result = pd.DataFrame({
+    "Actual": y_inv.flatten(),
+    "Predicted": pred_inv.flatten()
+}, index=data.index[split+100:])
 
-# -------------------- DISPLAY RESULTS --------------------
-st.subheader("📊 Actual vs Predicted Prices")
-st.write(plotting_data.tail())
+st.subheader("📊 Prediction Results")
+st.write(result.tail())
 
 # -------------------- FINAL GRAPH --------------------
-st.subheader("📉 Prediction Graph")
+st.subheader("📉 Actual vs Predicted")
 
-fig = plt.figure(figsize=(15, 6))
-
-plt.plot(data['Close'][:splitting_len + 100], label="Training Data")
-plt.plot(plotting_data['Actual Price'], label="Actual Price")
-plt.plot(plotting_data['Predicted Price'], label="Predicted Price")
-
+fig2 = plt.figure(figsize=(15,6))
+plt.plot(data['Close'][:split+100], label="Training Data")
+plt.plot(result['Actual'], label="Actual")
+plt.plot(result['Predicted'], label="Predicted")
 plt.legend()
-st.pyplot(fig)
+
+st.pyplot(fig2)
