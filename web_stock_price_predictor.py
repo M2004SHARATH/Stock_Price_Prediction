@@ -1,78 +1,100 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from keras.models import load_model
 import matplotlib.pyplot as plt
 import yfinance as yf
 from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
-from keras.models import load_model
 
+# Title of the app
 st.title("Stock Price Predictor App")
 
+# Input field for stock ID
 stock = st.text_input("Enter the Stock ID", "AAPL")
 
-# Set date range
+# Date range for stock data
 end = datetime.now()
 start = datetime(end.year - 20, end.month, end.day)
 
-# --- THE FIX FOR 'NO DATA FOUND' ---
-@st.cache_data # This caches the data so you don't hit Yahoo Finance too often
-def load_data(ticker):
-    # We use 'multi_level_index=False' to keep the dataframe simple
-    df = yf.download(ticker, start=start, end=end, multi_level_index=False)
-    return df
+# --- FIX 1: DOWNLOAD DATA CORRECTLY ---
+# We add multi_level_index=False to avoid the KeyError 'Close'
+steel_authority = yf.download(stock, start=start, end=end, multi_level_index=False)
 
-try:
-    data = load_data(stock)
-    
-    if data.empty:
-        st.error(f"No data found for '{stock}'. Please verify the ticker symbol.")
-        st.info("Tip: Use 'AAPL' for Apple, 'TSLA' for Tesla, or 'RELIANCE.NS' for NSE stocks.")
-        st.stop()
-except Exception as e:
-    st.error(f"Error fetching data: {e}")
+# Load pre-trained model
+model = load_model("Latest_stock_price_model.keras")
+
+# Display stock data
+st.subheader("Stock Data")
+st.write(steel_authority)
+
+# --- FIX 2: DATA CHECK ---
+if steel_authority.empty:
+    st.error("No data found for this Stock ID. Please check the symbol (e.g., AAPL, MSFT, TSLA).")
     st.stop()
 
-# --- MODEL LOADING ---
-try:
-    model = load_model("Latest_stock_price_model.keras")
-except Exception as e:
-    st.error(f"Could not load model file: {e}")
-    st.stop()
+# Splitting the data
+splitting_len = int(len(steel_authority) * 0.7)
+# Use a clear reference to 'Close'
+x_test = pd.DataFrame(steel_authority.Close[splitting_len:])
 
-st.subheader(f"Latest Data for {stock}")
-st.write(data.tail(5))
+# Define plot function (Original Logic)
+def plot_graph(figsize, values, full_data, extra_data=0, extra_dataset= None):
+    fig = plt.figure(figsize=figsize)
+    plt.plot(full_data.Close, 'b', label='Original Price')
+    plt.plot(values, 'orange', label='Moving Average')
+    if extra_data:
+        plt.plot(extra_dataset, 'g')
+    return fig
 
-# --- DATA PREPARATION ---
-splitting_len = int(len(data) * 0.7)
-x_test_data = pd.DataFrame(data['Close'][splitting_len:])
+# Moving Averages
+steel_authority['MA_for_250_days'] = steel_authority.Close.rolling(250).mean()
+st.subheader('Original Close Price and MA for 250 days')
+st.pyplot(plot_graph((15, 6), steel_authority['MA_for_250_days'], steel_authority, 0))
 
-# Scaling
+steel_authority['MA_for_200_days'] = steel_authority.Close.rolling(200).mean()
+st.subheader('Original Close Price and MA for 200 days')
+st.pyplot(plot_graph((15, 6), steel_authority['MA_for_200_days'], steel_authority, 0))
+
+steel_authority['MA_for_100_days'] = steel_authority.Close.rolling(100).mean()
+st.subheader('Original Close Price and MA for 100 days')
+st.pyplot(plot_graph((15, 6), steel_authority['MA_for_100_days'], steel_authority, 1, steel_authority['MA_for_250_days']))
+
+# --- FIX 3: SCALING LOGIC ---
 scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_data = scaler.fit_transform(x_test_data)
+# We use the 'Close' column directly to avoid the 'stock' variable KeyError
+scaled_data = scaler.fit_transform(x_test[['Close']])
 
-# Prepare prediction arrays
-x_data = []
+x_data, y_data = [], []
 for i in range(100, len(scaled_data)):
     x_data.append(scaled_data[i-100:i])
+    y_data.append(scaled_data[i])
 
-if len(x_data) > 0:
-    x_data = np.array(x_data)
-    predictions = model.predict(x_data)
-    
-    # Inverse scaling for display
-    # Note: We create a dummy scaler or use the existing one correctly
-    inv_pre = scaler.inverse_transform(predictions)
-    inv_y_test = scaler.inverse_transform(scaled_data[100:])
+x_data, y_data = np.array(x_data), np.array(y_data)
 
-    # Plotting
-    st.subheader('Original vs Predicted Price')
-    fig2, ax2 = plt.subplots(figsize=(12,6))
-    ax2.plot(inv_y_test, 'b', label='Original Price')
-    ax2.plot(inv_pre, 'r', label='Predicted Price')
-    ax2.set_xlabel('Time Steps')
-    ax2.set_ylabel('Price')
-    ax2.legend()
-    st.pyplot(fig2)
-else:
-    st.warning("Not enough historical data to make a prediction.")
+# Making predictions
+predictions = model.predict(x_data)
+
+# Inversing the scaling for plotting
+inv_pre = scaler.inverse_transform(predictions)
+inv_y_test = scaler.inverse_transform(y_data)
+
+# Plotting the results
+plotting_data = pd.DataFrame(
+    {
+        'original_test_data': inv_y_test.reshape(-1),
+        'predictions': inv_pre.reshape(-1)
+    },
+    index = steel_authority.index[splitting_len+100:]
+)
+
+st.subheader("Original vs Predicted Price")
+st.write(plotting_data.tail(10))
+
+fig2 = plt.figure(figsize=(15,6))
+plt.plot(plotting_data['original_test_data'], 'b', label='Original Price')
+plt.plot(plotting_data['predictions'], 'r', label='Predicted Price')
+plt.xlabel('Time')
+plt.ylabel('Price')
+plt.legend()
+st.pyplot(fig2)
