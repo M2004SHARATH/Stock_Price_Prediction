@@ -24,7 +24,7 @@ def get_stock_data(symbol):
         "function": "TIME_SERIES_DAILY_ADJUSTED",
         "symbol": symbol,
         "outputsize": "full",
-        "apikey": API_KEY
+        "apikey": V7WDUTTBBL4KH406
     }
 
     r = requests.get(url, params=params)
