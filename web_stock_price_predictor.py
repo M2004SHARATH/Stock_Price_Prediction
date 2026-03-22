@@ -4,77 +4,44 @@ import numpy as np
 from keras.models import load_model
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
-import requests
+import yfinance as yf
+import time
 
-# -------------------- CONFIG --------------------
-API_KEY = "V7WDUTTBBL4KH406"
-
+# -------------------- TITLE --------------------
 st.title("📈 Stock Price Predictor App")
 
-stock = st.text_input("Enter Stock Symbol (AAPL, MSFT, TSLA)", "AAPL")
+# -------------------- INPUT --------------------
+stock = st.text_input("Enter Stock Ticker", "AAPL")
 
-# -------------------- FETCH DATA --------------------
+# -------------------- FETCH DATA (RETRY LOGIC) --------------------
 @st.cache_data
-def get_stock_data(symbol):
-    try:
-        url = "https://www.alphavantage.co/query"
-        params = {
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
-            "symbol": symbol,
-            "outputsize": "full",
-            "apikey": API_KEY
-        }
+def load_data(ticker):
+    for i in range(3):  # retry 3 times
+        try:
+            data = yf.Ticker(ticker).history(period="20y")
 
-        res = requests.get(url, params=params, timeout=10)
-        data = res.json()
+            if not data.empty:
+                return data
 
-        # API limit hit
-        if "Note" in data:
-            return None, "limit"
+        except:
+            time.sleep(2)
 
-        # Invalid symbol
-        if "Time Series (Daily)" not in data:
-            return None, "invalid"
+    return pd.DataFrame()
 
-        df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient="index")
+data = load_data(stock)
 
-        df = df.rename(columns={
-            "1. open": "Open",
-            "2. high": "High",
-            "3. low": "Low",
-            "4. close": "Close",
-            "5. adjusted close": "Adj Close",
-            "6. volume": "Volume"
-        })
+# Try Indian ticker automatically
+if data.empty and "." not in stock:
+    data = load_data(stock + ".NS")
 
-        df = df.astype(float)
-        df.index = pd.to_datetime(df.index)
-        df = df.sort_index()
-
-        return df, "ok"
-
-    except Exception:
-        return None, "error"
-
-# Try API
-data, status = get_stock_data(stock)
-
-# -------------------- FALLBACK (NEVER FAILS) --------------------
-if status != "ok":
-    st.warning("⚠️ API failed. Using demo dataset instead (app will still work).")
-
-    # Fallback dataset (guaranteed working)
-    data = pd.read_csv(
-        "https://raw.githubusercontent.com/datasets/s-and-p-500/master/data/data.csv"
-    )
-
-    data = data[['Date', 'SP500']].dropna()
-    data.columns = ['Date', 'Close']
-    data['Date'] = pd.to_datetime(data['Date'])
-    data.set_index('Date', inplace=True)
+# Final check
+if data.empty:
+    st.error("❌ Unable to fetch stock data.")
+    st.info("👉 Try: AAPL, TSLA, MSFT, RELIANCE.NS, TCS.NS")
+    st.stop()
 
 # -------------------- SHOW DATA --------------------
-st.subheader("Stock Data")
+st.subheader(f"Stock Data for {stock}")
 st.write(data.tail())
 
 # -------------------- LOAD MODEL --------------------
@@ -115,7 +82,7 @@ for i in range(100, len(scaled_test)):
 x_data, y_data = np.array(x_data), np.array(y_data)
 
 if len(x_data) == 0:
-    st.error("❌ Not enough data.")
+    st.error("❌ Not enough data for prediction.")
     st.stop()
 
 # -------------------- PREDICT --------------------
