@@ -7,86 +7,108 @@ import yfinance as yf
 from datetime import datetime
 from sklearn.preprocessing import MinMaxScaler
 
-# Title of the app
+# Title
 st.title("Stock Price Predictor App")
 
-# Input field for stock ID
+# Input stock ticker
 stock = st.text_input("Enter the Stock ID", "HDB")
 
-# Date range for stock data
+# Date range
 end = datetime.now()
 start = datetime(end.year - 20, end.month, end.day)
 
-# Download stock data
-steel_authority = yf.download(stock, start, end)
+# Download data
+data = yf.download(stock, start=start, end=end)
 
-# Load pre-trained model
+# Check if data is empty
+if data.empty:
+    st.error("No data found. Please enter a valid stock ticker.")
+    st.stop()
+
+# Load model
 model = load_model("Latest_stock_price_model.keras")
 
-# Display stock data
+# Show data
 st.subheader("Stock Data")
-st.write(steel_authority)
+st.write(data.tail())
 
-# Splitting the data
-splitting_len = int(len(steel_authority) * 0.7)
-x_test = pd.DataFrame(steel_authority.Close[splitting_len:])
+# Split data
+splitting_len = int(len(data) * 0.7)
+train_data = data[:splitting_len]
+test_data = data[splitting_len:]
 
-# Define plot function
-def plot_graph(figsize, values, full_data, extra_data=0, extra_dataset= None):
+# Use ONLY Close column
+x_test = pd.DataFrame(test_data['Close'])
+
+# Plot function
+def plot_graph(figsize, values, full_data, extra_data=False, extra_dataset=None):
     fig = plt.figure(figsize=figsize)
-    plt.plot(values, 'orange') 
-    plt.plot(full_data.Close, 'b')
-    if extra_data:
-        plt.plot(extra_dataset)
+    plt.plot(values, 'orange', label='Moving Average')
+    plt.plot(full_data.Close, 'blue', label='Close Price')
+    if extra_data and extra_dataset is not None:
+        plt.plot(extra_dataset, 'green', label='Extra MA')
+    plt.legend()
     return fig
 
-# Moving Averages and plotting
-steel_authority['MA_for_250_days'] = steel_authority.Close.rolling(250).mean()
-st.subheader('Original Close Price and MA for 250 days')
-st.pyplot(plot_graph((15, 6), steel_authority['MA_for_250_days'], steel_authority, 0))
+# Moving averages
+data['MA250'] = data['Close'].rolling(250).mean()
+st.subheader('Close Price & 250-Day MA')
+st.pyplot(plot_graph((15, 6), data['MA250'], data))
 
-steel_authority['MA_for_200_days'] = steel_authority.Close.rolling(200).mean()
-st.subheader('Original Close Price and MA for 200 days')
-st.pyplot(plot_graph((15, 6), steel_authority['MA_for_200_days'], steel_authority, 0))
+data['MA200'] = data['Close'].rolling(200).mean()
+st.subheader('Close Price & 200-Day MA')
+st.pyplot(plot_graph((15, 6), data['MA200'], data))
 
-steel_authority['MA_for_100_days'] = steel_authority.Close.rolling(100).mean()
-st.subheader('Original Close Price and MA for 100 days')
-st.pyplot(plot_graph((15, 6), steel_authority['MA_for_100_days'], steel_authority, 1, steel_authority['MA_for_250_days']))
+data['MA100'] = data['Close'].rolling(100).mean()
+st.subheader('Close Price & 100-Day MA')
+st.pyplot(plot_graph((15, 6), data['MA100'], data, True, data['MA250']))
 
-
-
-# Scaling and preparing data for prediction
+# Scaling
 scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_data = scaler.fit_transform(x_test[[stock]])
 
+# Fit ONLY on training data (important)
+scaler.fit(train_data[['Close']])
+
+scaled_test = scaler.transform(x_test[['Close']])
+
+# Create sequences
 x_data, y_data = [], []
-for i in range(100, len(scaled_data)):
-    x_data.append(scaled_data[i-100:i])
-    y_data.append(scaled_data[i])
+
+for i in range(100, len(scaled_test)):
+    x_data.append(scaled_test[i-100:i])
+    y_data.append(scaled_test[i])
 
 x_data, y_data = np.array(x_data), np.array(y_data)
 
-# Making predictions
+# Check if enough data
+if len(x_data) == 0:
+    st.error("Not enough data for prediction.")
+    st.stop()
+
+# Predictions
 predictions = model.predict(x_data)
 
-# Inversing the scaling for plotting
-inv_pre = scaler.inverse_transform(predictions)
-inv_y_test = scaler.inverse_transform(y_data)
+# Inverse transform
+inv_predictions = scaler.inverse_transform(predictions)
+inv_y = scaler.inverse_transform(y_data)
 
-# Plotting the results
-plotting_data = pd.DataFrame(
-    {
-        'original_test_data': inv_y_test.reshape(-1),
-        'predictions': inv_pre.reshape(-1)
-    },
-    index=steel_authority.index[splitting_len + 100:]
-)
+# Create dataframe
+plotting_data = pd.DataFrame({
+    'Original': inv_y.reshape(-1),
+    'Predicted': inv_predictions.reshape(-1)
+}, index=data.index[splitting_len + 100:])
 
-st.subheader("Original values vs Predicted values")
-st.write(plotting_data)
+# Show table
+st.subheader("Original vs Predicted")
+st.write(plotting_data.tail())
 
-st.subheader('Original Close Price vs Predicted Close price')
+# Plot results
+st.subheader("Prediction Graph")
 fig = plt.figure(figsize=(15, 6))
-plt.plot(pd.concat([steel_authority.Close[:splitting_len + 100], plotting_data], axis=0))
-plt.legend(["Data-not used", "Original Test data", "Predicted Test data"])
+
+plt.plot(data['Close'][:splitting_len + 100], label="Training Data")
+plt.plot(plotting_data['Original'], label="Actual Price")
+plt.plot(plotting_data['Predicted'], label="Predicted Price")
+
+plt.legend()
 st.pyplot(fig)
