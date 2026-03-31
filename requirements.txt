@@ -3,6 +3,6 @@ pandas
 numpy<2.0.0
 tensorflow-cpu
 keras
-yfinance>=0.2.40
+yfinance
 scikit-learn
 matplotlib
